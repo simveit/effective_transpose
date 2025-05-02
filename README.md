@@ -2,7 +2,7 @@
 
 Improve matrix transpose step by step.
 
-Please see [my blogpost]() for a detailed explanation.
+Please see [my blogpost](http://veitner.bearblog.dev/making-matrix-transpose-really-fast-on-hopper-gpus/) for a detailed explanation.
 
 ## Performance Comparison
 
