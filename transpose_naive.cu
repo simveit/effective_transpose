@@ -1,4 +1,4 @@
-#include <cuda.h>  // CUtensormap
+#include <cuda.h>
 #include <cuda_runtime.h>
 
 #include <cmath>
@@ -32,68 +32,44 @@ void checkLast(char const *file, int line) {
 template <int BLOCK_SIZE>
 __global__ void kernel(const __grid_constant__ CUtensorMap tensor_map,
                        const __grid_constant__ CUtensorMap tensor_map_tr) {
-  // The destination shared memory buffer of a bulk tensor operation should be
-  // 128 byte aligned.
   __shared__ alignas(1024) float smem_buffer[BLOCK_SIZE * BLOCK_SIZE];
   __shared__ alignas(1024) float smem_buffer_tr[BLOCK_SIZE * BLOCK_SIZE];
-  // Coordinates for upper left tile in GMEM.
   int x = blockIdx.x * BLOCK_SIZE;
   int y = blockIdx.y * BLOCK_SIZE;
 
   int col = threadIdx.x % BLOCK_SIZE;
   int row = threadIdx.x / BLOCK_SIZE;
 
-// Initialize shared memory barrier with the number of threads participating in
-// the barrier.
 #pragma nv_diag_suppress static_var_with_dynamic_init
   __shared__ barrier bar;
 
   if (threadIdx.x == 0) {
-    // Initialize barrier. All `blockDim.x` threads in block participate.
     init(&bar, blockDim.x);
-    // Make initialized barrier visible in async proxy.
     cde::fence_proxy_async_shared_cta();
   }
-  // Syncthreads so initialized barrier is visible to all threads.
   __syncthreads();
 
   barrier::arrival_token token;
   if (threadIdx.x == 0) {
-    // Initiate bulk tensor copy.
     cde::cp_async_bulk_tensor_2d_global_to_shared(&smem_buffer, &tensor_map, x,
                                                   y, bar);
-    // Arrive on the barrier and tell how many bytes are expected to come in.
     token = cuda::device::barrier_arrive_tx(bar, 1, sizeof(smem_buffer));
   } else {
-    // Other threads just arrive.
     token = bar.arrive();
   }
-  // Wait for the data to have arrived.
   bar.wait(std::move(token));
 
-  // Transpose tile.
   smem_buffer_tr[col * BLOCK_SIZE + row] = smem_buffer[row * BLOCK_SIZE + col];
 
-  // Wait for shared memory writes to be visible to TMA engine.
   cde::fence_proxy_async_shared_cta();
   __syncthreads();
-  // After syncthreads, writes by all threads are visible to TMA engine.
-
-  // Initiate TMA transfer to copy shared memory to global memory
   if (threadIdx.x == 0) {
-    // Transpose tile inside matrix
     cde::cp_async_bulk_tensor_2d_shared_to_global(&tensor_map_tr, y, x,
                                                   &smem_buffer_tr);
-    // Wait for TMA transfer to have finished reading shared memory.
-    // Create a "bulk async-group" out of the previous bulk copy operation.
     cde::cp_async_bulk_commit_group();
-    // Wait for the group to have completed reading from shared memory.
     cde::cp_async_bulk_wait_group_read<0>();
   }
 
-  // Destroy barrier. This invalidates the memory region of the barrier. If
-  // further computations were to take place in the kernel, this allows the
-  // memory location of the shared memory barrier to be reused.
   if (threadIdx.x == 0) {
     (&bar)->~barrier();
   }
@@ -110,7 +86,6 @@ int main() {
   float *h_in = new float[GMEM_HEIGHT * GMEM_WIDTH];
   float *h_out = new float[GMEM_HEIGHT * GMEM_WIDTH];
 
-  // Initialize with normal distribution
   std::default_random_engine generator(42);
   std::normal_distribution<float> distribution(0.0, 1.0);
 
@@ -137,16 +112,15 @@ int main() {
   uint32_t box_size_tr[rank] = {SMEM_HEIGHT, SMEM_WIDTH};
   uint32_t elem_stride[rank] = {1, 1};
 
-  // Create the tensor descriptor.
   CUresult res = cuTensorMapEncodeTiled(
-      &tensor_map,  // CUtensorMap *tensorMap,
+      &tensor_map,
       CUtensorMapDataType::CU_TENSOR_MAP_DATA_TYPE_FLOAT32,
-      rank,         // cuuint32_t tensorRank,
-      tensor_ptr,   // void *globalAddress,
-      size,         // const cuuint64_t *globalDim,
-      stride,       // const cuuint64_t *globalStrides,
-      box_size,     // const cuuint32_t *boxDim,
-      elem_stride,  // const cuuint32_t *elementStrides,
+      rank,
+      tensor_ptr,
+      size,
+      stride,
+      box_size,
+      elem_stride,
       CUtensorMapInterleave::CU_TENSOR_MAP_INTERLEAVE_NONE,
       CUtensorMapSwizzle::CU_TENSOR_MAP_SWIZZLE_NONE,
       CUtensorMapL2promotion::CU_TENSOR_MAP_L2_PROMOTION_NONE,
@@ -155,14 +129,14 @@ int main() {
   assert(res == CUDA_SUCCESS);
 
   CUresult res_tr = cuTensorMapEncodeTiled(
-      &tensor_map_tr,  // CUtensorMap *tensorMap,
+      &tensor_map_tr,
       CUtensorMapDataType::CU_TENSOR_MAP_DATA_TYPE_FLOAT32,
-      rank,           // cuuint32_t tensorRank,
-      tensor_ptr_tr,  // void *globalAddress,
-      size_tr,        // const cuuint64_t *globalDim,
-      stride,         // const cuuint64_t *globalStrides,
-      box_size_tr,    // const cuuint32_t *boxDim,
-      elem_stride,    // const cuuint32_t *elementStrides,
+      rank,
+      tensor_ptr_tr,
+      size_tr,
+      stride,
+      box_size_tr,
+      elem_stride,
       CUtensorMapInterleave::CU_TENSOR_MAP_INTERLEAVE_NONE,
       CUtensorMapSwizzle::CU_TENSOR_MAP_SWIZZLE_NONE,
       CUtensorMapL2promotion::CU_TENSOR_MAP_L2_PROMOTION_NONE,
